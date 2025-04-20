@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cybernetic Pong with Explosions</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background-color: #0f0f1a;
+            overflow: hidden;
+            user-select: none;
+        }
+        
+        .glow {
+            box-shadow: 0 0 10px #3b82f6, 0 0 20px #3b82f6, 0 0 30px #3b82f6;
+        }
+        
+        .explosion {
+            position: absolute;
+            border-radius: 50%;
+            pointer-events: none;
+            transform: translate(-50%, -50%);
+            background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(59,130,246,0.8) 50%, transparent 70%);
+            animation: explode 0.5s forwards;
+        }
+        
+        @keyframes explode {
+            0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(3); opacity: 0; }
+        }
+        
+        .trail {
+            position: absolute;
+            border-radius: 50%;
+            background-color: rgba(59, 130, 246, 0.5);
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        
+        .power-up {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+        
+        .cyber-border {
+            border: 2px solid #3b82f6;
+            box-shadow: inset 0 0 10px #3b82f6, 0 0 10px #3b82f6;
+        }
+    </style>
+</head>
+<body class="text-blue-400 flex flex-col items-center justify-center h-screen">
+    <div class="text-center mb-4">
+        <h1 class="text-4xl font-bold mb-2 glow">CYBERNETIC PONG</h1>
+        <div class="flex justify-center gap-8 text-xl">
+            <div>PLAYER: <span id="player-score" class="text-white">0</span></div>
+            <div>CPU: <span id="cpu-score" class="text-white">0</span></div>
+        </div>
+    </div>
+    
+    <div class="relative cyber-border bg-black bg-opacity-50" id="game-container" style="width: 800px; height: 500px;">
+        <div id="ball" class="absolute w-4 h-4 bg-blue-400 rounded-full glow"></div>
+        <div id="player-paddle" class="absolute w-4 h-20 bg-blue-400 rounded glow"></div>
+        <div id="cpu-paddle" class="absolute w-4 h-20 bg-blue-400 rounded glow"></div>
+        <div id="center-line" class="absolute top-0 bottom-0 w-px bg-blue-400 bg-opacity-30 left-1/2 transform -translate-x-1/2"></div>
+    </div>
+    
+    <div class="mt-6 flex gap-4">
+        <button id="start-btn" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded glow transition">START</button>
+        <button id="reset-btn" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 rounded transition">RESET</button>
+    </div>
+    
+    <div class="mt-4 text-sm opacity-70">
+        <p>Use MOUSE or TOUCH to move your paddle</p>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // Game elements
+            const gameContainer = document.getElementById('game-container');
+            const ball = document.getElementById('ball');
+            const playerPaddle = document.getElementById('player-paddle');
+            const cpuPaddle = document.getElementById('cpu-paddle');
+            const playerScore = document.getElementById('player-score');
+            const cpuScore = document.getElementById('cpu-score');
+            const startBtn = document.getElementById('start-btn');
+            const resetBtn = document.getElementById('reset-btn');
+            
+            // Game state
+            let gameRunning = false;
+            let ballX = 400;
+            let ballY = 250;
+            let ballSpeedX = 5;
+            let ballSpeedY = 5;
+            let playerPaddleY = 210;
+            let cpuPaddleY = 210;
+            let playerScoreValue = 0;
+            let cpuScoreValue = 0;
+            let lastTime = 0;
+            let powerUps = [];
+            let trails = [];
+            let gameLoopId;
+            
+            // Initialize game elements
+            function initGame() {
+                const containerRect = gameContainer.getBoundingClientRect();
+                gameContainer.width = containerRect.width;
+                gameContainer.height = containerRect.height;
+                
+                // Position paddles
+                playerPaddle.style.left = '20px';
+                cpuPaddle.style.left = (gameContainer.width - 24) + 'px';
+                
+                // Position ball
+                resetBall();
+                
+                // Event listeners
+                gameContainer.addEventListener('mousemove', movePlayerPaddle);
+                gameContainer.addEventListener('touchmove', (e) => {
+                    e.preventDefault();
+                    const touchY = e.touches[0].clientY - gameContainer.getBoundingClientRect().top;
+                    movePlayerPaddle({ clientY: touchY + gameContainer.getBoundingClientRect().top });
+                });
+                
+                startBtn.addEventListener('click', startGame);
+                resetBtn.addEventListener('click', resetGame);
+            }
+            
+            // Reset ball position
+            function resetBall() {
+                ballX = gameContainer.width / 2;
+                ballY = gameContainer.height / 2;
+                ballSpeedX = (Math.random() > 0.5 ? 1 : -1) * 5;
+                ballSpeedY = (Math.random() * 4 - 2);
+            }
+            
+            // Move player paddle
+            function movePlayerPaddle(e) {
+                const containerRect = gameContainer.getBoundingClientRect();
+                const mouseY = e.clientY - containerRect.top;
+                
+                // Keep paddle within game container
+                playerPaddleY = Math.max(0, Math.min(gameContainer.height - 80, mouseY - 40));
+                playerPaddle.style.top = playerPaddleY + 'px';
+            }
+            
+            // AI for CPU paddle
+            function moveCpuPaddle() {
+                const cpuPaddleCenter = cpuPaddleY + 40;
+                const ballFutureY = ballY + (ballX - (gameContainer.width - 24)) / ballSpeedX * ballSpeedY;
+                
+                // Predict ball position and move towards it
+                if (cpuPaddleCenter < ballFutureY - 10) {
+                    cpuPaddleY += 4;
+                } else if (cpuPaddleCenter > ballFutureY + 10) {
+                    cpuPaddleY -= 4;
+                }
+                
+                // Keep paddle within bounds
+                cpuPaddleY = Math.max(0, Math.min(gameContainer.height - 80, cpuPaddleY));
+                cpuPaddle.style.top = cpuPaddleY + 'px';
+            }
+            
+            // Create explosion effect
+            function createExplosion(x, y) {
+                const explosion = document.createElement('div');
+                explosion.className = 'explosion';
+                explosion.style.left = x + 'px';
+                explosion.style.top = y + 'px';
+                explosion.style.width = '30px';
+                explosion.style.height = '30px';
+                gameContainer.appendChild(explosion);
+                
+                // Remove after animation
+                setTimeout(() => {
+                    explosion.remove();
+                }, 500);
+            }
+            
+            // Create trail effect
+            function createTrail(x, y) {
+                const trail = document.createElement('div');
+                trail.className = 'trail';
+                trail.style.left = x + 'px';
+                trail.style.top = y + 'px';
+                trail.style.width = '8px';
+                trail.style.height = '8px';
+                gameContainer.appendChild(trail);
+                
+                trails.push(trail);
+                
+                // Fade out and remove
+                setTimeout(() => {
+                    trail.style.opacity = '0';
+                    trail.style.transform = `translate(-50%, -50%) scale(0.5)`;
+                    setTimeout(() => {
+                        trail.remove();
+                        trails = trails.filter(t => t !== trail);
+                    }, 300);
+                }, 200);
+            }
+            
+            // Spawn power-up
+            function spawnPowerUp() {
+                if (Math.random() > 0.98 && powerUps.length < 2) {
+                    const type = Math.random() > 0.5 ? 'speed' : 'size';
+                    const x = 100 + Math.random() * (gameContainer.width - 200);
+                    const y = 50 + Math.random() * (gameContainer.height - 100);
+                    
+                    const powerUp = document.createElement('div');
+                    powerUp.className = 'power-up';
+                    powerUp.dataset.type = type;
+                    powerUp.style.left = x + 'px';
+                    powerUp.style.top = y + 'px';
+                    
+                    if (type === 'speed') {
+                        powerUp.style.backgroundColor = '#10b981';
+                        powerUp.style.boxShadow = '0 0 10px #10b981';
+                    } else {
+                        powerUp.style.backgroundColor = '#f59e0b';
+                        powerUp.style.boxShadow = '0 0 10px #f59e0b';
+                    }
+                    
+                    gameContainer.appendChild(powerUp);
+                    powerUps.push(powerUp);
+                    
+                    // Remove after some time
+                    setTimeout(() => {
+                        if (powerUp.parentNode) {
+                            powerUp.remove();
+                            powerUps = powerUps.filter(p => p !== powerUp);
+                        }
+                    }, 5000);
+                }
+            }
+            
+            // Check power-up collisions
+            function checkPowerUpCollisions() {
+                const ballRect = ball.getBoundingClientRect();
+                
+                powerUps.forEach((powerUp, index) => {
+                    const powerUpRect = powerUp.getBoundingClientRect();
+                    
+                    if (
+                        ballRect.left < powerUpRect.right &&
+                        ballRect.right > powerUpRect.left &&
+                        ballRect.top < powerUpRect.bottom &&
+                        ballRect.bottom > powerUpRect.top
+                    ) {
+                        // Apply power-up effect
+                        if (powerUp.dataset.type === 'speed') {
+                            ballSpeedX *= 1.5;
+                            ballSpeedY *= 1.5;
+                        } else {
+                            // Temporarily increase paddle size
+                            playerPaddle.style.height = '100px';
+                            setTimeout(() => {
+                                playerPaddle.style.height = '80px';
+                            }, 5000);
+                        }
+                        
+                        // Create explosion effect
+                        createExplosion(
+                            parseFloat(powerUp.style.left) + 10,
+                            parseFloat(powerUp.style.top) + 10
+                        );
+                        
+                        // Remove power-up
+                        powerUp.remove();
+                        powerUps.splice(index, 1);
+                    }
+                });
+            }
+            
+            // Main game loop
+            function gameLoop(timestamp) {
+                if (!gameRunning) return;
+                
+                // Calculate delta time for smooth animation
+                const deltaTime = timestamp - lastTime;
+                lastTime = timestamp;
+                
+                // Move ball
+                ballX += ballSpeedX;
+                ballY += ballSpeedY;
+                
+                // Create trail effect
+                if (deltaTime > 0) {
+                    createTrail(ballX, ballY);
+                }
+                
+                // Ball collision with top and bottom walls
+                if (ballY <= 0 || ballY >= gameContainer.height - 8) {
+                    ballSpeedY = -ballSpeedY;
+                    createExplosion(ballX, ballY);
+                }
+                
+                // Ball collision with paddles
+                const ballRect = ball.getBoundingClientRect();
+                const playerPaddleRect = playerPaddle.getBoundingClientRect();
+                const cpuPaddleRect = cpuPaddle.getBoundingClientRect();
+                
+                if (
+                    ballRect.left <= playerPaddleRect.right &&
+                    ballRect.right >= playerPaddleRect.left &&
+                    ballRect.top <= playerPaddleRect.bottom &&
+                    ballRect.bottom >= playerPaddleRect.top
+                ) {
+                    // Calculate angle based on where ball hits paddle
+                    const hitPosition = (ballY - playerPaddleY) / 80;
+                    const angle = hitPosition * Math.PI / 3; // -60 to 60 degrees
+                    
+                    ballSpeedX = Math.abs(ballSpeedX) * 1.05;
+                    ballSpeedY = Math.sin(angle) * 10;
+                    
+                    createExplosion(ballX, ballY);
+                }
+                
+                if (
+                    ballRect.right >= cpuPaddleRect.left &&
+                    ballRect.left <= cpuPaddleRect.right &&
+                    ballRect.top <= cpuPaddleRect.bottom &&
+                    ballRect.bottom >= cpuPaddleRect.top
+                ) {
+                    // Calculate angle based on where ball hits paddle
+                    const hitPosition = (ballY - cpuPaddleY) / 80;
+                    const angle = hitPosition * Math.PI / 3; // -60 to 60 degrees
+                    
+                    ballSpeedX = -Math.abs(ballSpeedX) * 1.05;
+                    ballSpeedY = Math.sin(angle) * 10;
+                    
+                    createExplosion(ballX, ballY);
+                }
+                
+                // Scoring
+                if (ballX <= 0) {
+                    cpuScoreValue++;
+                    cpuScore.textContent = cpuScoreValue;
+                    resetBall();
+                    createExplosion(ballX, ballY);
+                }
+                
+                if (ballX >= gameContainer.width - 8) {
+                    playerScoreValue++;
+                    playerScore.textContent = playerScoreValue;
+                    resetBall();
+                    createExplosion(ballX, ballY);
+                }
+                
+                // Move CPU paddle
+                moveCpuPaddle();
+                
+                // Spawn and check power-ups
+                spawnPowerUp();
+                checkPowerUpCollisions();
+                
+                // Update ball position
+                ball.style.left = ballX + 'px';
+                ball.style.top = ballY + 'px';
+                
+                // Continue game loop
+                gameLoopId = requestAnimationFrame(gameLoop);
+            }
+            
+            // Start game
+            function startGame() {
+                if (!gameRunning) {
+                    gameRunning = true;
+                    startBtn.textContent = 'PAUSE';
+                    lastTime = performance.now();
+                    gameLoopId = requestAnimationFrame(gameLoop);
+                } else {
+                    gameRunning = false;
+                    startBtn.textContent = 'RESUME';
+                    cancelAnimationFrame(gameLoopId);
+                }
+            }
+            
+            // Reset game
+            function resetGame() {
+                gameRunning = false;
+                cancelAnimationFrame(gameLoopId);
+                
+                playerScoreValue = 0;
+                cpuScoreValue = 0;
+                playerScore.textContent = '0';
+                cpuScore.textContent = '0';
+                
+                startBtn.textContent = 'START';
+                resetBall();
+                
+                // Clear power-ups
+                powerUps.forEach(powerUp => powerUp.remove());
+                powerUps = [];
+                
+                // Clear trails
+                trails.forEach(trail => trail.remove());
+                trails = [];
+            }
+            
+            // Initialize game
+            initGame();
+            
+            // Resize handler
+            window.addEventListener('resize', () => {
+                const containerRect = gameContainer.getBoundingClientRect();
+                gameContainer.width = containerRect.width;
+                gameContainer.height = containerRect.height;
+                
+                // Reposition elements
+                cpuPaddle.style.left = (gameContainer.width - 24) + 'px';
+                resetBall();
+            });
+        });
+    </script>
+</body>
+</html>
